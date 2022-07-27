@@ -61,7 +61,7 @@ static ssize_t chrdevbase_write (struct file *filp, const char __user *buf, size
 }
 
 
-static struct file_operations chrdevbase_fops = 
+static const struct file_operations chrdevbase_fops = 
 {
     .owner = THIS_MODULE,
     .open = chrdevbase_open,
