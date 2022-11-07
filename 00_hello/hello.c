@@ -6,20 +6,18 @@
 #define CHRDEVBASE_MAJPR    200 //主设备号
 #define CHRDEVBASE_NAME "chrdevbase"    //设备名字
 
-MODULE_LICENSE("Dual BSD/GPL");
-
 static char DeviceName[100] = {"kernel device"};
 
 static int chrdevbase_open (struct inode * inode, struct file *filp)
 {
-    printk("chrdevbase_open\r\n");
+    //printk("chrdevbase_open\r\n");
 
     return 0;
 }
 
 static int chrdevbase_release (struct inode *inode, struct file *filp)
 {
-    printk("chrdevbase_release\r\n");
+    //printk("chrdevbase_release\r\n");
 
     return 0;
 }
@@ -71,7 +69,7 @@ static const struct file_operations chrdevbase_fops =
 };
 
 
-static int __int hello_init(void)
+static int __init hello_init(void)
 {
     printk(KERN_ALERT "Hello, world\n");
 
@@ -92,3 +90,6 @@ static void __exit hello_exit(void)
 
 module_init(hello_init);
 module_exit(hello_exit);
+
+MODULE_LICENSE("Dual BSD/GPL");
+MODULE_AUTHOR("Alex_min");
