@@ -18,11 +18,24 @@ static struct input_des input_key_dev;
 
 static void input_key_timer_handle(unsigned long data)
 {
+    int value;
     struct input_des *dev = (struct input_des *)data;
 
-    input_event(dev->inputdev, EV_KEY, 0);
-    input_sync(dev->inputdev);
-    printk("timer...\r\n");
+    value = gpio_get_value(dev->gpio_num);
+    printk("timer %d...\r\n", value);
+
+    
+    input_event(dev->key_input_dev, EV_KEY, BTN_0, !value);
+    input_sync(dev->key_input_dev);
+#if 0
+    if (0 == value) {
+        input_event(dev->key_input_dev, EV_KEY, BTN_0, 1);
+        input_sync(dev->key_input_dev);
+    } else {
+        input_event(dev->key_input_dev, EV_KEY, BTN_0, 0);
+        input_sync(dev->key_input_dev);
+    }
+#endif
 }
 
 static irqreturn_t input_key_irq_handle(int irq, void *data)
@@ -85,9 +98,9 @@ static int __init input_key_init(void)
 	if (!input_key_dev.key_input_dev)
 		return -ENOMEM;
     input_key_dev.key_input_dev->name = "key-input";
-    set_bit(EV_KEY, input_key_dev.key_input_dev->evbit);
-	set_bit(EV_REP, input_key_dev.key_input_dev->evbit);
-	set_bit(KEY_0, input_key_dev.key_input_dev->keybit);
+    __set_bit(EV_KEY, input_key_dev.key_input_dev->evbit);
+	__set_bit(EV_REP, input_key_dev.key_input_dev->evbit);
+	__set_bit(BTN_0, input_key_dev.key_input_dev->keybit);
 
  	ret = input_register_device(input_key_dev.key_input_dev);
 	if (ret)
@@ -98,7 +111,15 @@ static int __init input_key_init(void)
 
 static void __exit input_key_exit(void)
 {
-    gpio_free(key_dev.key_des.gpio_num);
+    //删除定时器
+    del_timer_sync(&input_key_dev.timer_t);
+    //释放中断
+    free_irq(input_key_dev.irq_num, &input_key_dev);
+    //注销并删除input设备
+    input_unregister_device(input_key_dev.key_input_dev);
+    input_free_device(input_key_dev.key_input_dev);
+
+    gpio_free(input_key_dev.gpio_num);
 }
 
 module_init(input_key_init);
