@@ -2,6 +2,13 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdint.h>
+
+struct dev_data {
+    uint16_t ir;
+    uint16_t als;
+    uint16_t ps;
+};
 
 int main(int argc, char *argv[])
 {
@@ -10,6 +17,7 @@ int main(int argc, char *argv[])
     char *file_name;
     char *buf;
     int ret;
+    struct dev_data data = {0};
 
     file_name = argv[1];
 
@@ -19,7 +27,11 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    read(fd, buf, size);
+    while (1) {
+        read(fd, &data, sizeof(data));
+        printf("ir:%d als:%d ps:%d\n", data.ir, data.als, data.ps);
+        usleep(1000000);
+    }
 
     ret = close(fd);
     if (ret < 0) {

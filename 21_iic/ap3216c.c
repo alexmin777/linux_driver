@@ -2,9 +2,24 @@
 #include <linux/i2c.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
+#include <linux/delay.h>
+#include <linux/uaccess.h>
 
 #define DEVICE_NAME "ap3216c"
 #define DEVICE_NUM  1
+
+/*
+ * ap3216c Register Address Definition
+ */
+#define AP3216C_SYSTEMCONG    0x00  /* Configuration register */
+#define AP3216C_INTSTATUS     0x01  /* Interrupt status register */
+#define AP3216C_INTCLEAR      0x02  /* Interrupt clear register */
+#define AP3216C_IRDATALOW     0x0A  /* IR Data Low byte */
+#define AP3216C_IRDATAHIGH    0x0B  /* IR Data High byte */
+#define AP3216C_ALSDATALOW    0x0C  /* ALS Data Low byte */
+#define AP3216C_ALSDATAHIGH   0x0D  /* ALS Data High byte */
+#define AP3216C_PSDATALOW     0x0E  /* PS Data Low byte */
+#define AP3216C_PSDATAHIGH    0x0F  /* PS Data High byte */
 
 struct char_dev {
     int devID;
@@ -14,6 +29,12 @@ struct char_dev {
     struct class *class;
     struct device *device;
     void *adapter;
+};
+
+struct dev_data {
+    u16 ir;
+    u16 als;
+    u16 ps;
 };
 
 static struct char_dev ap3216c_dev;
@@ -69,17 +90,55 @@ static inline u8 ap3216c_write_reg(struct char_dev *dev, u8 reg, u8 data)
 
 int ap3216c_open(struct inode *nd, struct file *fp)
 {
+    u8 value;
+    int ret;
     fp->private_data = &ap3216c_dev;
-    printk("open ap3216c\n");
+
+    ret = ap3216c_write_reg(fp->private_data, AP3216C_SYSTEMCONG, 0x04);  //复位设备
+    mdelay(10);
+    ret = ap3216c_write_reg(fp->private_data, AP3216C_SYSTEMCONG, 0x03);  //使能ir+ps+als功能
+
+    ret = ap3216c_read_reg(fp->private_data, AP3216C_SYSTEMCONG, &value);  //验证设备是否工作
+    if (0x03 == value) {
+        printk("ap3216c work!\n");
+    } else {
+        printk("ap3216c open failed!\n");
+    }
 
     return 0;
 }
 
 ssize_t ap3216c_read(struct file *fp, char __user *buf, size_t size, loff_t * ppos)
 {
-    printk("read ap3216c\n");
+    struct char_dev *dev = (struct char_dev *)fp->private_data;
+    u8 data[8] = {0};
+    struct dev_data senseor_data = {0};
+    int i;
+    int ret;
 
-    return 0;
+    for (i = 0; i < 8; i++)
+        ap3216c_read_reg(dev, AP3216C_IRDATALOW + i, &data[i]);
+
+    //IR数据
+    if (0x80 & data[0]) {   /* 检验IR数据是否有效 */
+        senseor_data.ir = 0;
+    } else {
+        senseor_data.ir = ((u16)data[1] << 2) | (data[0] & 0x03);
+    }
+    
+    //ALS数据
+    senseor_data.als = ((u16)data[3] << 8) | data[2];
+
+    //PS数据
+    if (0x40 & data[4]) {   /* 检验PS数据是否有效 */
+        senseor_data.ps = 0;
+    } else {
+        senseor_data.ps = ((u16)(data[5] & 0x3f) << 4) | (data[4] & 0x0f);
+    }
+
+    ret = copy_to_user((void *)buf, (void *)&senseor_data, sizeof(senseor_data));
+
+    return ret;
 }
 
 ssize_t ap326c_write(struct file *fp, const char __user *buf, size_t size, loff_t *ppos)
