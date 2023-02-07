@@ -6,20 +6,14 @@
 #include <linux/of_gpio.h>
 #include <linux/uaccess.h>
 #include <linux/types.h>
-#include <linux/irq.h>
-#include <linux/of_irq.h>
-#include <linux/interrupt.h>
 
 #define IRQ_NAME    "key_irq"
 #define IRQ_CNT     1
-#define VAILD_VALUE 0x01
-#define INVAILD_VALUE 0xff
 
 struct key_describe {
+    struct device_node *nd;
     int gpio_num;
-    int irq_num;
-    atomic_t key_value;
-    atomic_t release_value;
+    int iqr_num;
 };
 
 struct key {
@@ -29,68 +23,16 @@ struct key {
     struct cdev cdev_t;
     struct class *class_t;
     struct device *device_t;
-    struct timer_list timer_t;
-    struct device_node *nd;
     struct key_describe key_des;
 };
 
 static struct key key_dev;
 
-static void key_timer_handle(unsigned long arg)
-{
-    int value = 0;
-    struct key *dev = (struct key *)arg;
-    struct key_describe *key = &dev->key_des;
-
-    value = gpio_get_value(dev->key_des.gpio_num);
-    if (0 == value) {
-        atomic_set(&key->key_value, value);
-        printk("Press on\r\n");
-    } else {
-        atomic_set(&key->key_value, 0x80 | value);
-        atomic_set(&key->release_value, 1);
-        printk("Loosen\r\n");
-    }
-}
-
-static irqreturn_t key_irq_hanlde(int irq, void *data)
-{
-    struct key *dev = (struct key *)data;
-
-    key_dev.timer_t.data = (unsigned long)data;
-    mod_timer(&dev->timer_t, jiffies + msecs_to_jiffies(20));
-
-    return IRQ_RETVAL(IRQ_HANDLED);
-}
-
-static int key_open(struct inode * inode, struct file *filp)
+static int key_open (struct inode * inode, struct file *filp)
 {
     filp->private_data = &key_dev;
 
     return 0;
-}
-
-ssize_t key_read(struct file *filp, char __user *buf, size_t size, loff_t *offt)
-{
-    int release_key;
-    int key_value;
-    int ret;
-    struct key *dev = (struct key*)filp->private_data;
-
-    release_key = atomic_read(&dev->key_des.release_value);
-    key_value = atomic_read(&dev->key_des.key_value);
-
-    if (release_key) {
-        ret = copy_to_user(buf, &key_value, sizeof(key_value));
-        atomic_set(&dev->key_des.release_value, 0);
-    } else {
-        goto err_data;
-    }
-
-    return ret;
-
-err_data:
-    return -EINVAL;
 }
 
 long key_ctl(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -98,7 +40,7 @@ long key_ctl(struct file *filp, unsigned int cmd, unsigned long arg)
     return 0;
 }
 
-static int key_release(struct inode *inode, struct file *filp)
+static int key_release (struct inode *inode, struct file *filp)
 {
     return 0;
 }
@@ -106,7 +48,6 @@ static int key_release(struct inode *inode, struct file *filp)
 static const struct file_operations timer_ops = {
     .owner = THIS_MODULE,
     .open = key_open,
-    .read = key_read,
     .unlocked_ioctl = key_ctl,
     .release = key_release,
 };
@@ -115,14 +56,14 @@ static int key_gpio_init(struct key *dev)
 {
     int ret;
 
-    dev->nd = of_find_node_by_path("/key");
-	if (!dev->nd) {
+    dev->key_des.nd = of_find_node_by_path("/key");
+	if (!dev->key_des.nd) {
 		printk("node 'key' not found\n");
         ret = -EINVAL;
 		goto err_node;
 	}
 
-    dev->key_des.gpio_num = of_get_named_gpio(dev->nd, "key-gpios", 0);
+    dev->key_des.gpio_num = of_get_named_gpio(dev->key_des.nd, "key-gpios", 0);
     if (dev->key_des.gpio_num < 0) {
         ret = -EINVAL;
         goto err_gpio;
@@ -140,22 +81,9 @@ static int key_gpio_init(struct key *dev)
         goto err_dir;
 	}
 
-#if 1
-    dev->key_des.irq_num = irq_of_parse_and_map(dev->nd, 0);
-#else
-    dev->key_des.irq_num = gpio_to_irq(dev->key_des.gpio_num);
-#endif
-    printk("KEY irq number:%d\r\n", dev->key_des.irq_num);
-
-    ret = request_irq(dev->key_des.irq_num, key_irq_hanlde, IRQ_TYPE_EDGE_BOTH, "key-irq", (void*)dev);
-    if (ret) {
-        printk("requset iqr failed\r\n");
-        goto err_irq;
-    }
 
     return 0;
 
-err_irq:
 err_dir:
 err_request:
     gpio_free(dev->key_des.gpio_num);
@@ -165,19 +93,11 @@ err_node:
     return ret;
 }
 
-static int __init key_init(void)
+static int __init irq_init(void)
 {
     int ret;
 
     key_dev.major = 0;
-
-    //初始化按键值
-    atomic_set(&key_dev.key_des.key_value, INVAILD_VALUE);
-    atomic_set(&key_dev.key_des.release_value, 0);
-
-    //初始化定时器
-    init_timer(&key_dev.timer_t);
-    key_dev.timer_t.function = key_timer_handle;
 
     //分配设备ID
     if (key_dev.major) {
@@ -235,9 +155,8 @@ err_cdev:
     return ret;
 }
 
-static void __exit key_exit(void)
+static void __exit irq_exit(void)
 {
-    free_irq(key_dev.key_des.irq_num, &key_dev);
     gpio_free(key_dev.key_des.gpio_num);
     device_destroy(key_dev.class_t, key_dev.dev_id);
     class_destroy(key_dev.class_t);
@@ -245,8 +164,8 @@ static void __exit key_exit(void)
     unregister_chrdev_region(key_dev.dev_id, IRQ_CNT);
 }
 
-module_init(key_init);
-module_exit(key_exit);
+module_init(irq_init);
+module_exit(irq_exit);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Alex_min");
