@@ -1,0 +1,1 @@
+cmd_/home/alex/alex/alientek/drivers/test/linux_driver/22_spi/icm20608.ko := arm-linux-gnueabihf-ld -EL -r  -T ./scripts/module-common.lds --build-id  -o /home/alex/alex/alientek/drivers/test/linux_driver/22_spi/icm20608.ko /home/alex/alex/alientek/drivers/test/linux_driver/22_spi/icm20608.o /home/alex/alex/alientek/drivers/test/linux_driver/22_spi/icm20608.mod.o
