@@ -5,9 +5,18 @@
 #include <linux/of.h>
 #include <linux/of_gpio.h>
 #include <linux/spi/spi.h>
+#include <linux/delay.h>
+#include "icm20608.h"
 
 #define DEVICE_NAME     "icm20608"
 #define DEVICE_NUM      1
+#define DEBUG_LOG
+
+#ifdef DEBUG_LOG
+  #define spi_debug(format,args...) printk(format,##args)
+#else
+  #define spi_debug(format,args...)
+#endif
 
 struct char_dev {
     int devID;
@@ -50,31 +59,94 @@ static struct file_operations icm20608_ops = {
     .write      =   icm20608_write,
 };
 
-static int icm20608_read_reg(struct char_dev* dev, u8 reg, void *buf, int len)
+static int icm20608_read_reg(struct char_dev* dev, u8 reg, u8 *buf)
 {
+    int ret;
     struct spi_message m;
     struct spi_transfer *t;
+    u8 rxdata[2];
+    u8 txdata[2];
     struct spi_device *spi = (struct spi_device *)dev->private_data;
 
+    if (reg < 0x80) {
+        spi_debug("reg is invalid\n");
+        return -ENXIO;
+    }
+
     t = kzalloc(sizeof(struct spi_transfer), GFP_KERNEL);
-    t.tx_buf = reg;
-    t.len = len;
+    txdata[0] = reg | SPI_READ;    //第8位为1,代表读操作
+    txdata[1] = 0xff;              //全双工，返回无效数据
+
+    t->tx_buf = txdata;
+    t->rx_buf = rxdata;
+    t->len = 2;
+
+    spi_message_init(&m);
+    spi_message_add_tail(t, &m);
 
     //拉低片选信号
     gpio_set_value(dev->cs_gpio, 0);
-
-
+    //同步传输，会阻塞，等待数据传输完成
+    ret = spi_sync(spi, &m);
     //拉高片选信号
     gpio_set_value(dev->cs_gpio, 0);
 
     kfree(t);
+
+    memcpy(buf, &rxdata[1], 1);
+
+    return ret;
+}
+
+static int icm20608_write_reg(struct char_dev* dev, u8 reg, u8 buf)
+{
+    int ret;
+    struct spi_message m;
+    struct spi_transfer *t;
+    u8 txdata[2];
+    struct spi_device *spi = (struct spi_device *)dev->private_data;
+
+    if (reg < 0x80) {
+        spi_debug("reg is invalid\n");
+        return -ENXIO;
+    }
+
+    t = kzalloc(sizeof(struct spi_transfer), GFP_KERNEL);
+    txdata[0] = reg & SPI_WRITE;    //第8位为0,代表写操作
+    txdata[1] = buf;              //全双工，返回无效数据
+
+    t->tx_buf = txdata;
+    t->len = 2;
+
+    spi_message_init(&m);
+    spi_message_add_tail(t, &m);
+
+    //拉低片选信号
+    gpio_set_value(dev->cs_gpio, 0);
+    //同步传输，会阻塞，等待数据传输完成
+    ret = spi_sync(spi, &m);
+    //拉高片选信号
+    gpio_set_value(dev->cs_gpio, 0);
+
+    kfree(t);
+
+    return ret;
 }
 
 static void setup_icm20608(struct char_dev* dev)
 {
-    struct spi_device *spi = (struct spi_device *)dev->private_data;
+    u8 value = 0;
+    //struct spi_device *spi = (struct spi_device *)dev->private_data;
 
-
+    //reset
+    icm20608_write_reg(dev, POWER_MANAGEMENT1, DEVICE_RESET);
+    spi_debug("restart icm20608\n");
+    mdelay(50);
+    //chip ID
+    icm20608_read_reg(dev, WHO_AM_I, &value);
+    if (CHIP_ID != value) {
+        spi_debug("faile to read chipID\n");
+    }
 }
 
 static int icm20608_probe(struct spi_device *spi)
@@ -97,7 +169,7 @@ static int icm20608_probe(struct spi_device *spi)
     cdev_init(&icm20608_dev.cdev, &icm20608_ops);
     ret = cdev_add(&icm20608_dev.cdev, icm20608_dev.devID, DEVICE_NUM);
     if (ret) {
-        printk("cdev add failed!\n");
+        spi_debug("cdev add failed!\n");
         ret = -EINVAL;
         goto err_add;
     }
@@ -105,13 +177,13 @@ static int icm20608_probe(struct spi_device *spi)
     //在文件系统中创建并注册一个设备
     icm20608_dev.class = class_create(THIS_MODULE, DEVICE_NAME);
     if (IS_ERR(icm20608_dev.class)) {
-        printk("create icm20608 class failed!");
+        spi_debug("create icm20608 class failed!");
         ret = -EINVAL;
         goto err_class;
     }
     icm20608_dev.device = device_create(icm20608_dev.class, NULL, icm20608_dev.devID, NULL, DEVICE_NAME);
     if (IS_ERR(icm20608_dev.device)) {
-        printk("create icm20608 device failed!");
+        spi_debug("create icm20608 device failed!");
         ret = -EINVAL;
         goto err_device;
     }
@@ -122,18 +194,18 @@ static int icm20608_probe(struct spi_device *spi)
 
     icm20608_dev.cs_gpio = of_get_named_gpio(icm20608_dev.nd, "cs-gpios", 0);
     if (icm20608_dev.cs_gpio < 0) {
-        printk("get cs-gpios failed\n");
+        spi_debug("get cs-gpios failed\n");
         goto err_gpio;
     }
 
     ret = gpio_request(icm20608_dev.cs_gpio, "cs");
     if (ret) {
-        printk("cs-gpio request failled\n");
+        spi_debug("cs-gpio request failled\n");
         goto err_gpio;
     }
     ret = gpio_direction_output(icm20608_dev.cs_gpio, 1);
     if (ret) {
-        printk("set cs output failed\n");
+        spi_debug("set cs output failed\n");
         goto err_out;
     }
 
